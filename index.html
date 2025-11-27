@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Apartment & House Rentals</title>
+  <link rel="stylesheet" href="styles.css" />
+
+  <!-- React & Babel CDN -->
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo, useRef } = React;
+
+    const readJSON = (key, fallback) => {
+      try {
+        const v = localStorage.getItem(key);
+        return v ? JSON.parse(v) : fallback;
+      } catch {
+        return fallback;
+      }
+    };
+    const writeJSON = (key, value) => {
+      try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+    };
+
+    // new helper: expire rentals when endDate passed
+    function expireRentals(rentals, listings) {
+      const now = new Date();
+      const active = [];
+      const expired = [];
+      for (const r of rentals) {
+        if (r.endDate && new Date(r.endDate) < now) {
+          expired.push(r);
+        } else {
+          active.push(r);
+        }
+      }
+      // mark listings from expired rentals available
+      if (expired.length) {
+        const updatedListings = listings.map(l => {
+          return expired.some(e => e.listingId === l.id) ? { ...l, rented: false } : l;
+        });
+        return { rentals: active, listings: updatedListings };
+      }
+      return { rentals, listings };
+    }
+
+    function App() {
+      const [page, setPage] = useState("dashboard");
+      const [listings, setListings] = useState(() => readJSON("listings", []));
+      const [applicants, setApplicants] = useState(() => readJSON("applicants", []));
+      const [rentals, setRentals] = useState(() => readJSON("rentals", []));
+      const [initialized, setInitialized] = useState(false);
+
+      // sync localStorage with state
+      useEffect(() => {
+        if (initialized) {
+          writeJSON("listings", listings);
+          writeJSON("applicants", applicants);
+          writeJSON("rentals", rentals);
+        } else {
+          setInitialized(true);
+        }
+      }, [listings, applicants, rentals, initialized]);
+
+      // expire rentals on load
+      useEffect(() => {
+        const { rentals: active, listings: updatedListings } = expireRentals(rentals, listings);
+        setRentals(active);
+        setListings(updatedListings);
+      }, []);
+
+      return (
+        <div className="app">
+          <header>
+            <h1>Rental Management</h1>
+            <nav>
+              <button onClick={() => setPage("dashboard")}>Dashboard</button>
+              <button onClick={() => setPage("listings")}>Listings</button>
+              <button onClick={() => setPage("applicants")}>Applicants</button>
+              <button onClick={() => setPage("rentals")}>Rentals</button>
+            </nav>
+          </header>
+
+          <main>
+            {page === "dashboard" && <Dashboard listings={listings} applicants={applicants} rentals={rentals} />}
+            {page === "listings" && <Listings listings={listings} setListings={setListings} rentals={rentals} setRentals={setRentals} />}
+            {page === "applicants" && <Applicants applicants={applicants} setApplicants={setApplicants} rentals={rentals} setRentals={setRentals} />}
+            {page === "rentals" && <Rentals rentals={rentals} setRentals={setRentals} applicants={applicants} listings={listings} setListings={setListings} />}
+          </main>
+        </div>
+      );
+    }
+
+    function Dashboard({ listings, applicants, rentals }) {
+      const recent = rentals.slice(-4).reverse();
+      const available = listings.filter(l => !l.rented).length;
+      return (
+        <section>
+          <h1>Dashboard</h1>
+          <div className="cards">
+            <div className="card">
+              <h3>{available}</h3>
+              <p>Available units</p>
+            </div>
+            <div className="card">
+              <h3>{listings.length}</h3>
+              <p>Total listings</p>
+            </div>
+            <div className="card">
+              <h3>{applicants.length}</h3>
+              <p>Applicants</p>
+            </div>
+            <div className="card">
+              <h3>{rentals.length}</h3>
+              <p>Active rentals</p>
+            </div>
+          </div>
+
+          <h2>Recent rentals</h2>
+          <ul className="compact">
+            {recent.length === 0 && <li className="muted">No rentals yet</li>}
+            {recent.map(r => <li key={r.id}>{r.applicantName} → {r.listingTitle} <small className="muted">({new Date(r.startDate).toLocaleDateString()})</small></li>)}
+          </ul>
+        </section>
+      );
+    }
+
+    /* Carousel component - accepts images array (base64 or url) */
+    function Carousel({ images = [], onUpload }) {
+      const [index, setIndex] = useState(0);
+      const fileRef = useRef();
+
+      useEffect(() => {
+        if (index >= images.length) setIndex(Math.max(0, images.length - 1));
+      }, [images, index]);
+
+      function prev() { setIndex(i => Math.max(0, i - 1)); }
+      function next() { setIndex(i => Math.min(images.length - 1, i + 1)); }
+
+      function onFiles(e) {
+        const files = Array.from(e.target.files || []);
+        if (!files.length) return;
+        const readers = files.map(f => new Promise(res => {
+          const r = new FileReader();
+          r.onload = () => res(r.result);
+          r.readAsDataURL(f);
+        }));
+        Promise.all(readers).then(dataUrls => {
+          onUpload && onUpload(dataUrls);
+        });
+      }
+
+      return (
+        <div className="carousel">
+          <div className="carousel-inner">
+            {images.length === 0 ? (
+              <div className="carousel-placeholder">No photos — add some</div>
+            ) : (
+              <img src={images[index]} className="carousel-img" alt={`photo ${index+1}`} />
+            )}
+            <div className="carousel-controls">
+              <button className="small" onClick={prev} disabled={index === 0}>◀</button>
+              <span className="muted">{images.length ? `${index+1} / ${images.length}` : "0 / 0"}</span>
+              <button className="small" onClick={next} disabled={index >= images.length - 1}>▶</button>
+            </div>
+          </div>
+
+          <div className="carousel-thumbs">
+            {images.map((src, i) => (
+              <button key={i} className={"thumb " + (i === index ? "active" : "")} onClick={() => setIndex(i)}>
+                <img src={src} alt={`thumb ${i+1}`} />
+              </button>
+            ))}
+            <div style={{flex:1, textAlign:'right'}}>
+              <input ref={fileRef} type="file" accept="image/*" multiple style={{display:'none'}} onChange={onFiles} />
+              <button className="small" onClick={() => fileRef.current && fileRef.current.click()}>Upload photos</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function Listings({ listings, setListings, rentals, setRentals }) {
+      const [title, setTitle] = useState("");
+      const [type, setType] = useState("Apartment");
+      const [beds, setBeds] = useState(1);
+      const [rentPrice, setRentPrice] = useState("");
+
+      function addListing() {
+        const t = title.trim();
+        if (!t || !rentPrice) return alert("Enter listing title and rent.");
+        const item = { id: Date.now().toString(), title: t, type, beds: Number(beds), rent: Number(rentPrice), rented: false, images: [] };
+        setListings([...listings, item]);
+        setTitle(""); setRentPrice(""); setBeds(1); setType("Apartment");
+      }
+
+      function remove(id) {
+        if (!confirm("Delete this listing? This will also remove related rentals.")) return;
+        setListings(listings.filter(l => l.id !== id));
+        setRentals(rentals.filter(r => r.listingId !== id));
+      }
+
+      function toggleRented(id, val) {
+        setListings(listings.map(l => l.id === id ? { ...l, rented: val } : l));
+      }
+
+      function handleUpload(listingId, newImages) {
+        setListings(listings.map(l => l.id === listingId ? { ...l, images: [...(l.images || []), ...newImages] } : l));
+      }
+
+      return (
+        <section>
+          <h1>Listings</h1>
+          <div className="form-row">
+            <input aria-label="Listing title" value={title} onChange={e => setTitle(e.target.value)} placeholder="123 Main St, Apt 4B" />
+            <select value={type} onChange={e => setType(e.target.value)}>
+              <option>Apartment</option>
+              <option>House</option>
+              <option>Studio</option>
+            </select>
+            <input type="number" min="0" value={beds} onChange={e => setBeds(e.target.value)} style={{width:80}} />
+            <input value={rentPrice} onChange={e => setRentPrice(e.target.value)} placeholder="Monthly rent" style={{width:120}} />
+            <button onClick={addListing}>Add</button>
+          </div>
+
+          <ul>
+            {listings.length === 0 && <li className="muted">No listings yet</li>}
+            {listings.map(l => (
+              <li key={l.id}>
+                <div style={{display:'flex',flexDirection:'column',gap:8,flex:1}}>
+                  <div style={{display:'flex',gap:12,alignItems:'flex-start'}}>
+                    <div className="listing-carousel">
+                      <Carousel images={l.images || []} onUpload={(imgs) => handleUpload(l.id, imgs)} />
+                    </div>
+                    <div style={{flex:1}}>
+                      <strong>{l.title}</strong>
+                      <div className="muted">{l.type} · {l.beds} bd · ${l.rent}/mo</div>
+                      <div style={{marginTop:8}}>
+                        <button className="small" onClick={() => toggleRented(l.id, !l.rented)}>{l.rented ? "Mark available" : "Mark rented"}</button>
+                        <button className="small danger" onClick={() => remove(l.id)} style={{marginLeft:8}}>Delete</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      );
+    }
+
+    function Applicants({ applicants, setApplicants, rentals, setRentals }) {
+      const [name, setName] = useState("");
+      const [phone, setPhone] = useState("");
+
+      function addApplicant() {
+        const n = name.trim();
+        if (!n) return alert("Enter applicant name.");
+        const item = { id: Date.now().toString(), name: n, phone: phone.trim() };
+        setApplicants([...applicants, item]);
+        setName(""); setPhone("");
+      }
+
+      function remove(id) {
+        if (!confirm("Delete this applicant? This will remove related rentals.")) return;
+        setApplicants(applicants.filter(a => a.id !== id));
+        setRentals(rentals.filter(r => r.applicantId !== id));
+      }
+
+      return (
+        <section>
+          <h1>Applicants</h1>
+          <div className="form-row">
+            <input aria-label="Applicant name" value={name} onChange={e => setName(e.target.value)} placeholder="Full name" />
+            <input value={phone} onChange={e => setPhone(e.target.value)} placeholder="Phone (optional)" />
+            <button onClick={addApplicant}>Add</button>
+          </div>
+
+          <ul>
+            {applicants.length === 0 && <li className="muted">No applicants yet</li>}
+            {applicants.map(a => (
+              <li key={a.id}>
+                <span>{a.name} <small className="muted">{a.phone}</small></span>
+                <div>
+                  <button className="small danger" onClick={() => remove(a.id)}>Delete</button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      );
+    }
+
+    function Rentals({ rentals, setRentals, applicants, listings, setListings }) {
+      const [applicantId, setApplicantId] = useState("");
+      const [listingId, setListingId] = useState("");
+      const [startDate, setStartDate] = useState("");
+      const [endDate, setEndDate] = useState("");
+
+      const enriched = useMemo(() => rentals.map(r => {
+        const a = applicants.find(x => x.id === r.applicantId);
+        const l = listings.find(x => x.id === r.listingId);
+        // compute days left (if endDate present)
+        let daysLeft = null;
+        if (r.endDate) {
+          const diff = Math.ceil((new Date(r.endDate) - new Date()) / (1000 * 60 * 60 * 24));
+          daysLeft = diff;
+        }
+        return { ...r, applicantName: a ? a.name : "(deleted)", listingTitle: l ? l.title : "(deleted)", daysLeft };
+      }), [rentals, applicants, listings]);
+
+      function addRental() {
+        if (!applicantId || !listingId || !startDate || !endDate) return alert("Select applicant, listing, start date and end date.");
+        const listing = listings.find(l => l.id === listingId);
+        if (listing && listing.rented) return alert("Listing already marked rented.");
+        if (new Date(endDate) <= new Date(startDate)) return alert("End date must be after start date.");
+
+        const a = applicants.find(x => x.id === applicantId);
+        const newR = {
+          id: Date.now().toString(),
+          applicantId,
+          listingId,
+          applicantName: a ? a.name : "",
+          listingTitle: listing ? listing.title : "",
+          startDate,
+          endDate,
+          createdAt: new Date().toISOString()
+        };
+        setRentals([...rentals, newR]);
+        setListings(listings.map(l => l.id === listingId ? { ...l, rented: true } : l));
+        setApplicantId(""); setListingId(""); setStartDate(""); setEndDate("");
+      }
+
+      function endRental(id) {
+        if (!confirm("End this rental? Listing will be marked available.")) return;
+        const r = rentals.find(x => x.id === id);
+        if (r) setListings(listings.map(l => l.id === r.listingId ? { ...l, rented: false } : l));
+        setRentals(rentals.filter(x => x.id !== id));
+      }
+
+      return (
+        <section>
+          <h1>Rentals</h1>
+          <div className="form-row">
+            <select value={applicantId} onChange={e => setApplicantId(e.target.value)}>
+              <option value="">Select applicant</option>
+              {applicants.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+
+            <select value={listingId} onChange={e => setListingId(e.target.value)}>
+              <option value="">Select listing</option>
+              {listings.filter(l => !l.rented).map(l => <option key={l.id} value={l.id}>{l.title} — ${l.rent}/mo</option>)}
+            </select>
+
+            <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
+            <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} />
+
+            <button onClick={addRental}>Create Rental</button>
+          </div>
+
+          <ul>
+            {enriched.length === 0 && <li className="muted">No active rentals</li>}
+            {enriched.map(r => (
+              <li key={r.id}>
+                <span>
+                  {r.applicantName} → {r.listingTitle}{" "}
+                  <small className="muted">({new Date(r.startDate).toLocaleDateString()} – {new Date(r.endDate).toLocaleDateString()})</small>
+                  {r.daysLeft !== null && (
+                    <div className="muted" style={{fontSize:12, marginTop:4}}>
+                      {r.daysLeft >= 0 ? `${r.daysLeft} day(s) left` : `expired`}
+                    </div>
+                  )}
+                </span>
+                <div>
+                  <button className="small danger" onClick={() => endRental(r.id)}>End rental</button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
